@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simplython</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=JetBrains+Mono:wght@500&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+</head>
+<body>
+  <section id="welcome">
+    <div class="welcome-card">
+      <div class="big-pip">🤖</div>
+      <h1>Simplython</h1>
+      <p id="welcome-msg">What's your name, Captain?</p>
+      <button id="google" class="btn google" hidden><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt=""> Sign in with Google</button>
+      <button id="continue" class="btn go big" hidden>Continue my adventure →</button>
+      <form id="name-form">
+        <input id="name-input" maxlength="20" autocomplete="off" required aria-label="Your name">
+        <button class="btn go">Let's go! 🚀</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="game" hidden>
+    <header>
+      <div id="captain"></div>
+      <button id="map-btn" class="btn small">🗺️ Map</button>
+      <div class="spacer"></div>
+      <div id="star-total"></div>
+      <button id="reset-all" class="btn small" title="Start the whole game again">↺ Reset</button>
+      <button id="parent-btn" class="icon-btn" title="Parent panel" aria-label="Parent panel">👨‍🏫</button>
+    </header>
+
+    <div id="map" hidden><div id="map-inner"></div></div>
+    <div id="toast" hidden role="status"></div>
+
+    <main id="play" hidden>
+      <div id="left">
+        <div id="task">
+          <div class="task-head">
+            <span id="part-name"></span>
+            <button id="speak" class="icon-btn" title="Read aloud" aria-label="Read aloud">🔊</button>
+          </div>
+          <h2 id="title"></h2>
+          <p id="text"></p>
+          <div id="hint-box"></div>
+        </div>
+        <div id="stage-wrap">
+          <div id="bubble" class="quiet"></div>
+          <div id="stage"></div>
+        </div>
+      </div>
+
+      <div id="right">
+        <div id="palette"></div>
+        <div id="editor"></div>
+        <div id="controls">
+          <button id="run" class="btn go" disabled>Pip is waking up…</button>
+          <button id="step" class="btn" title="Run one line at a time">👣 Step</button>
+          <button id="reset" class="btn" title="Put Pip back at the start">↺ Reset</button>
+          <label class="speed" title="Speed">🐢<input id="speed" type="range" min="0" max="100" value="45" aria-label="Speed">🐇</label>
+        </div>
+        <div id="message" role="status"></div>
+        <div class="minor">
+          <button id="hint" class="btn small">💡 Hint</button>
+          <button id="fresh" class="btn small">🧹 Start this level over</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="card" hidden>
+      <button id="card-speak" class="icon-btn" title="Read aloud" aria-label="Read aloud">🔊</button>
+      <div class="card-emoji" id="card-emoji"></div>
+      <h2 id="card-title"></h2>
+      <div id="card-text"></div>
+      <div id="card-extra"></div>
+      <button id="card-btn" class="btn go"></button>
+    </div>
+  </section>
+
+  <dialog id="win">
+    <canvas id="win-fx"></canvas>
+    <div class="win-pip">🤖</div>
+    <div id="win-stars"></div>
+    <h2 id="win-title"></h2>
+    <p id="win-tip"></p>
+    <div class="row">
+      <button id="win-again" class="btn">↺ Play again</button>
+      <button id="win-next" class="btn go">Next →</button>
+    </div>
+  </dialog>
+
+  <dialog id="parent">
+    <h2>👨‍🏫 Parent panel</h2>
+    <p id="ask"></p>
+    <div class="row">
+      <button id="skip" class="btn small">⏭ Skip this level</button>
+      <button id="unlock" class="btn small">🔓 Unlock all levels</button>
+      <button id="rename" class="btn small">✏️ Change name</button>
+      <button id="wipe" class="btn small danger">🗑 Reset all progress</button>
+      <button id="sign-out" class="btn small">🚪 Sign out</button>
+    </div>
+    <p class="muted">Click a level to jump to it. Minutes = time spent on that level.</p>
+    <div class="table-wrap"><table id="report"></table></div>
+    <div class="row"><button id="parent-close" class="btn go">Close</button></div>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
