@@ -19,7 +19,22 @@ A storm hit Pip's island, and Pip only understands Python. Kids write real Pytho
 | 🌊 Escape the Tide | Boss levels that combine everything |
 | 🐚 Shell Hunt | A new random beach every time, getting bigger and harder |
 
+**Session 2 — "Treasure Island"**: 51 levels of real programming ideas
+
+| Zone | What you learn |
+|---|---|
+| 🎒 Pip's Backpack | Variables: numbers, words, maths, `+=`, f-strings |
+| 🔁 Loop Lagoon | `for` loops, `range()`, `while` loops |
+| 🔀 Crab Crossroads | `if` / `else` / `elif`, `and`, sensors like `front_is_clear()` and `on_shell()` |
+| 🛠️ Robot Workshop | Functions with `def`, inputs and `return` |
+| 💰 Treasure Cove | Boss levels that use everything together |
+
+Many Session 2 levels test the same code on several different beaches, so the child has to write code that works anywhere, not just memorise one path.
+
 ## Features
+
+- **Coins & shop** 🪙: win levels to earn coins, then buy avatars (kids, animals, heroes), hats, pets and backgrounds
+- **Backgrounds and music**: beach, jungle, space, under the sea and candy land, each with its own little tune (🎵 to mute)
 
 - **Real Python** in the browser, powered by [Pyodide](https://pyodide.org)
 - **Kid-friendly errors**: *"Pip doesn't know the word mvoe. Did you mean move?"*

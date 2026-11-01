@@ -12,6 +12,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
 </head>
 <body>
+  <div id="scenery" aria-hidden="true"></div>
   <section id="welcome">
     <div class="welcome-card">
       <div class="big-pip">🤖</div>
@@ -32,6 +33,9 @@
       <button id="map-btn" class="btn small">🗺️ Map</button>
       <div class="spacer"></div>
       <div id="star-total"></div>
+      <div id="coin-total"></div>
+      <button id="shop-btn" class="btn small shop" title="Shop: avatars, hats, pets and backgrounds">🛍️ Shop</button>
+      <button id="music" class="icon-btn" title="Music on / off" aria-label="Music on or off">🎵</button>
       <button id="reset-all" class="btn small" title="Start the whole game again">↺ Reset</button>
       <button id="parent-btn" class="icon-btn" title="Parent panel" aria-label="Parent panel">👨‍🏫</button>
     </header>
@@ -87,12 +91,21 @@
     <canvas id="win-fx"></canvas>
     <div class="win-pip">🤖</div>
     <div id="win-stars"></div>
+    <div id="win-coins"></div>
     <h2 id="win-title"></h2>
     <p id="win-tip"></p>
     <div class="row">
       <button id="win-again" class="btn">↺ Play again</button>
       <button id="win-next" class="btn go">Next →</button>
     </div>
+  </dialog>
+
+  <dialog id="shop">
+    <h2>🛍️ Shop <span id="shop-coins"></span></h2>
+    <div id="shop-preview"></div>
+    <p id="shop-msg" role="status"></p>
+    <div id="shop-items"></div>
+    <div class="row"><button id="shop-close" class="btn go">Done</button></div>
   </dialog>
 
   <dialog id="parent">

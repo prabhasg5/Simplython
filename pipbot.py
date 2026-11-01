@@ -9,7 +9,8 @@ import re
 import sys
 
 DIRS = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # up, right, down, left
-COMMANDS = ["print", "move", "turn_left", "turn_right", "collect", "place"]
+SENSORS = ["front_is_clear", "on_shell", "at_flag"]
+COMMANDS = ["print", "move", "turn_left", "turn_right", "collect", "place"] + SENSORS
 ITEMS = ["🪵", "🚪", "🪟", "🔺", "🌺", "⭐", "🌴", "🚩"]
 TARGETS = {"B": "🪵", "D": "🚪", "O": "🪟", "R": "🔺"}  # see-through squares to build on
 BLOCKED = {
@@ -18,6 +19,7 @@ BLOCKED = {
     "C": "Ouch! A crab pinched Pip 🦀",
 }
 MAX_ACTIONS = 500
+MAX_LOOKS = 3000
 
 
 class Stop(Exception):
@@ -41,7 +43,7 @@ class World:
                     self.x, self.y = x, y
                     r[x] = "."
         self.d, self.wood = d, wood
-        self.placed, self.actions, self.said, self.shells = {}, [], [], 0
+        self.placed, self.actions, self.said, self.shells, self.looks = {}, [], [], 0, 0
 
     def _stop(self, msg):
         raise Stop(msg, _code_line())
@@ -52,11 +54,25 @@ class World:
         if len(self.actions) > MAX_ACTIONS:
             self._stop("Pip is tired! That's way too many steps 😴")
 
-    def move(self):
+    def ahead(self):
         dx, dy = DIRS[self.d]
         nx, ny = self.x + dx, self.y + dy
         inside = 0 <= ny < len(self.rows) and 0 <= nx < len(self.rows[ny])
-        tile = self.rows[ny][nx] if inside else None
+        return nx, ny, inside, self.rows[ny][nx] if inside else None
+
+    def look(self, what):
+        """Sensors for if/while. They don't move Pip, so they get their own limit for loops that never stop."""
+        self.looks += 1
+        if self.looks > MAX_LOOKS:
+            self._stop("Pip got dizzy looking around! 😵‍💫 Does your loop ever stop?")
+        if what == "front":
+            _, _, inside, tile = self.ahead()
+            return inside and tile not in BLOCKED
+        here = self.rows[self.y][self.x] if self.rows else None
+        return here == what
+
+    def move(self):
+        nx, ny, inside, tile = self.ahead()
         if not inside or tile in BLOCKED:
             self._act("bump")
             self._stop(BLOCKED[tile] if inside else "Whoa! That's the edge of the beach 🏝️")
@@ -109,15 +125,54 @@ class World:
         }
 
 
-def make_env(w):
+def make_env(w, ban=()):
     # Plain functions (not bound methods) so error messages say "move()" and not "World.move()".
     def move(): w.move()
     def turn_left(): w.turn(3)
     def turn_right(): w.turn(1)
     def collect(): w.collect()
     def place(item="🪵"): w.place(item)
-    return {"__name__": "__main__", "print": w.say, "move": move, "turn_left": turn_left,
-            "turn_right": turn_right, "collect": collect, "place": place}
+    def front_is_clear(): return w.look("front")
+    def on_shell(): return w.look("S")
+    def at_flag(): return w.look("F")
+    env = {"__name__": "__main__", "print": w.say, "move": move, "turn_left": turn_left,
+           "turn_right": turn_right, "collect": collect, "place": place,
+           "front_is_clear": front_is_clear, "on_shell": on_shell, "at_flag": at_flag}
+    for name in ban:  # some levels take a command away, e.g. "make your own turn_right"
+        env.pop(name, None)
+    return env
+
+
+def used(tree):
+    """Which Python ideas the code uses, so a level can ask for a loop, an if, a function..."""
+    u = set()
+    kinds = {ast.For: "for", ast.While: "while", ast.FunctionDef: "def", ast.Return: "return",
+             ast.JoinedStr: "fstring", ast.AugAssign: "+=", ast.Assign: "var"}
+    for n in ast.walk(tree):
+        for k, name in kinds.items():
+            if isinstance(n, k):
+                u.add(name)
+        if isinstance(n, ast.If):
+            u.add("if")
+            if n.orelse:
+                u.add("elif" if len(n.orelse) == 1 and isinstance(n.orelse[0], ast.If) else "else")
+        if isinstance(n, ast.BoolOp):
+            u.add("and" if isinstance(n.op, ast.And) else "or")
+    return sorted(u)
+
+
+def boxes(env, base):
+    """The child's variables (simple values only), for levels that check them."""
+    out = {}
+    for k, v in env.items():
+        if k in base or k.startswith("__") or callable(v):
+            continue
+        try:
+            json.dumps(v)
+            out[k] = v
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 SYNTAX_RULES = [
@@ -127,6 +182,7 @@ SYNTAX_RULES = [
     (("unmatched",), "There's an extra bracket ) here."),
     (("unexpected indent",), "This line has spaces at the start. Move it all the way to the left."),
     (("expected an indented block",), "The lines inside need to be pushed in with the Tab key ➡️"),
+    (("maybe you meant '=='",), "To compare two things, use == (two equals signs). One = puts a value in a box."),
     (("expected ':'",), "Don't forget the : at the end of this line."),
     (("invalid character",), 'There\'s a strange character here. Use plain quotes " " and brackets ( ).'),
     (("forgot a comma",), 'Pip can\'t read this. Did you forget quotes " " around words?'),
@@ -149,10 +205,18 @@ def friendly_error(e, names):
         close = difflib.get_close_matches(name, COMMANDS + names, 1, 0.6)
         if close:
             return f"Pip doesn't know the word “{name}”. Did you mean {close[0]}?"
-        return f"Pip doesn't know the word “{name}”. To make Pip say it, put it in quotes: print(\"{name}\")"
+        return (f"Pip doesn't know the word “{name}”. To make Pip say it, put it in quotes: print(\"{name}\"). "
+                f"If it's a box (a variable), put something in it first: {name} = ...")
     m = re.search(r"(\w+)\(\) takes 0 positional arguments", text)
     if isinstance(e, TypeError) and m:
         return f"{m.group(1)}() doesn't need anything inside its brackets. Just write {m.group(1)}()"
+    m = re.search(r"(\w+)\(\) missing \d+ required positional argument", text)
+    if isinstance(e, TypeError) and m:
+        return f"{m.group(1)}() needs something inside its brackets, like {m.group(1)}(3)"
+    if isinstance(e, TypeError) and ("concatenate" in text or "unsupported operand" in text):
+        return "You can't glue words and numbers together with +. Try str(number), commas in print, or an f-string: f\"I have {x} shells\""
+    if isinstance(e, ZeroDivisionError):
+        return "You can't divide by zero! Not even Pip can 🤯"
     return f"Something went wrong: {type(e).__name__}: {text}"
 
 
@@ -166,16 +230,19 @@ def error_line(e):
 
 
 def forgot_brackets(tree):
+    """`move` or `if at_flag:` without () does nothing (or is always true), so catch it."""
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Name) and node.value.id in COMMANDS:
-            return node.value.id, node.lineno
+        if isinstance(node, ast.Name) and node.id in COMMANDS and id(node) not in called:
+            return node.id, node.lineno
     return None
 
 
-def run(code, rows=(), d=1, wood=None):
+def run(code, rows=(), d=1, wood=None, ban=()):
     w = World(rows, d, wood)
-    env = make_env(w)
-    err = None
+    env = make_env(w, ban)
+    base = set(env)
+    err, tree = None, None
     try:
         tree = ast.parse(code, "<pip>")
         bare = forgot_brackets(tree)
@@ -191,13 +258,15 @@ def run(code, rows=(), d=1, wood=None):
         err = {"msg": friendly_error(e, [k for k in env if not k.startswith("__")]), "line": error_line(e)}
     out = w.summary()
     out["error"] = err
+    out["used"] = used(tree) if tree else []
+    out["vars"] = boxes(env, base)
     out["lines"] = sum(1 for l in code.splitlines() if l.strip() and not l.strip().startswith("#"))
     return out
 
 
 def run_json(payload):
     a = json.loads(payload)
-    return json.dumps(run(a["code"], a.get("map") or [], a.get("dir", 1), a.get("wood")), ensure_ascii=False)
+    return json.dumps(run(a["code"], a.get("map") or [], a.get("dir", 1), a.get("wood"), a.get("ban") or ()), ensure_ascii=False)
 
 
 if __name__ == "__main__" and sys.platform != "emscripten":  # used by test.mjs, never in the browser: JSON list of payloads on stdin -> JSON list of results

@@ -8,9 +8,9 @@ const fill = (s) => s.replaceAll("{name}", ctx.name);
 const cases = [];
 for (const l of LEVELS) {
   if (l.type === "card" || l.type === "endless") continue;
-  const base = { map: l.map, dir: l.dir ?? 1, wood: l.wood };
+  const base = { map: l.map, dir: l.dir ?? 1, wood: l.wood, ban: l.ban };
   if (l.type === "predict") cases.push({ l, kind: "predict code", want: "no error", p: { ...base, code: l.starter } });
-  else cases.push({ l, kind: "solution", want: true, p: { ...base, code: fill(l.solution) } });
+  else (l.maps || [l.map]).forEach((map, k) => cases.push({ l, kind: `solution (beach ${k + 1})`, want: true, p: { ...base, map, code: fill(l.solution) } }));
   if (l.debug) cases.push({ l, kind: "broken starter", want: false, p: { ...base, code: l.starter } });
   if (l.par && l.solution) {
     const n = l.solution.split("\n").filter((s) => s.trim()).length;
@@ -37,7 +37,10 @@ cases.forEach((c, i) => {
 const errs = [
   ["mvoe()", /Did you mean move/], ["move", /forgot the brackets/], ['print("hi)', /quote/],
   ["move(", /never closed/], ["print(Hello)", /put it in quotes/], ["move(3)", /doesn't need anything/],
-  ["  move()", /spaces at the start/], ["while True: pass", null],
+  ["  move()", /spaces at the start/], ["if at_flag:\n    move()", /forgot the brackets/],
+  ['x = 8\nprint("I am " + x)', /glue words and numbers/], ['if x = 1:\n    move()', /two equals/],
+  ["def f(n):\n    move()\nf()", /needs something inside/], ["while not at_flag():\n    pass", /dizzy/],
+  ["while True: pass", null],
 ];
 const er = JSON.parse(execFileSync("python3", ["pipbot.py"], {
   input: JSON.stringify(errs.slice(0, -1).map(([code]) => ({ code, map: ["P.F"] }))),

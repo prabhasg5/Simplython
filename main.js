@@ -11,8 +11,17 @@ const CHEERS = ["Great job", "Awesome", "You did it", "Brilliant", "Super coding
 // ---------- saved progress (this browser, plus Firestore when signed in with Google) ----------
 let P = load();
 function load() {
-  try { return { levels: {}, code: {}, ...JSON.parse(localStorage.getItem(KEY)) }; }
-  catch { return { levels: {}, code: {} }; }
+  try { return upgrade(JSON.parse(localStorage.getItem(KEY))); }
+  catch { return upgrade(); }
+}
+// Fills in anything older saves don't have yet (coins, shop items, what the avatar wears).
+function upgrade(s) {
+  s = { levels: {}, code: {}, ...s };
+  s.owned ||= [];
+  s.wear ||= { avatar: "🤖", hat: "", pet: "", theme: "beach" };
+  if (s.coins === undefined) s.coins = Object.values(s.levels).reduce((n, r) => n + (r.stars || 0), 0) * 5; // welcome bonus for stars already won
+  if (s.hat) { if (!s.owned.includes("🎩")) s.owned.push("🎩"); s.wear.hat ||= "🎩"; delete s.hat; } // the old Session 1 gift
+  return s;
 }
 function save() {
   const json = JSON.stringify(P);
@@ -21,13 +30,18 @@ function save() {
 }
 const rec = (id) => (P.levels[id] ||= { stars: 0, time: 0 });
 const done = (i) => !!P.levels[LEVELS[i]?.id]?.done;
-const unlocked = (i) => P.unlockAll || i === 0 || done(i) || done(i - 1);
+// Shell Hunt (endless) never blocks the road: the level after it opens once the level before it is done.
+const unlocked = (i) => P.unlockAll || i === 0 || done(i) || done(i - 1) || (LEVELS[i - 1]?.type === "endless" && done(i - 2));
 const totalStars = () => Object.values(P.levels).reduce((n, r) => n + (r.stars || 0), 0);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const fill = (s = "") => s.replaceAll("{name}", P.name || "Captain");
 const md = (s) => esc(fill(s))
   .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*(.+?)\*/g, "<i>$1</i>")
   .replace(/`(.+?)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
+
+// the child's avatar, with the hat and pet bought in the shop
+const me = (face = P.wear.avatar) => `<span class="av"><span class="face">${face}</span>`
+  + (P.wear.hat ? `<span class="hat">${P.wear.hat}</span>` : "") + (P.wear.pet ? `<span class="pet">${P.wear.pet}</span>` : "") + "</span>";
 
 // ---------- Python runner (Pyodide in a worker, killed if it runs too long) ----------
 let worker, ready = false, busy = false, pending = null;
@@ -87,7 +101,8 @@ function openLevel(i) {
   const predict = level.type === "predict";
   $("#part-name").textContent = PARTS[level.part] + (level.debug ? " · 🐛 fix the bug" : predict ? " · 🔮 predict" : "");
   $("#title").textContent = fill(level.title);
-  $("#text").innerHTML = md(level.text) + (level.type === "endless" ? huntLine() : "");
+  $("#text").innerHTML = md(level.text) + (level.type === "endless" ? huntLine() : "")
+    + (level.maps ? `<br><span class="hunt">🏝️ Tested on ${level.maps.length} different beaches</span>` : "");
   $("#hint-box").innerHTML = "";
   $("#hint").hidden = $("#fresh").hidden = $("#step").hidden = predict;
   setHintButton();
@@ -132,7 +147,7 @@ function renderStage() {
   W.rows.forEach((r, y) => r.forEach((_, x) => paint(x, y)));
   pipEl = document.createElement("div");
   pipEl.className = "pip";
-  pipEl.innerHTML = `<div class="arrow"></div><span class="face">🤖</span>${P.hat ? '<span class="hat">🎩</span>' : ""}`;
+  pipEl.innerHTML = `<div class="arrow"></div>${me()}`;
   st.append(pipEl);
   placePip();
 }
@@ -141,7 +156,7 @@ function renderTalk(st) {
   pipEl = null;
   st.className = "talk";
   const board = (title, text, id = "") => `<div class="board"><b>${title}</b><pre ${id && `id="${id}"`}>${esc(text)}</pre></div>`;
-  st.innerHTML = `<div class="talk-pip"><span class="face">${level.sleepy ? "😴" : "🤖"}</span>${P.hat ? '<span class="hat">🎩</span>' : ""}</div>`
+  st.innerHTML = `<div class="talk-pip">${me(level.sleepy ? "😴" : undefined)}</div>`
     + (level.target ? board("Copy this picture", level.target.join("\n")) : "")
     + board(level.target || level.freeArt ? "Your picture" : "What Pip said", "", "out");
 }
@@ -186,12 +201,13 @@ function apply(a) {
   else if (a.t === "say") {
     W.said.push(a.text);
     say(a.text);
-    if (!map) { face("🤖"); $("#out").textContent = W.said.join("\n"); }
+    if (!map) { face(P.wear.avatar); $("#out").textContent = W.said.join("\n"); }
   }
   else if (a.t === "bump" && pipEl) {
     pipEl.classList.remove("bump");
     void pipEl.offsetWidth;
     pipEl.classList.add("bump");
+    sfx("bump");
   }
 }
 
@@ -214,7 +230,20 @@ async function run(stepMode = false) {
   resetWorld();
   msg("");
   busy = true; setRunButton();
-  result = await runPython({ code: cm.getValue(), map, dir, wood: level.wood });
+  // Levels with several beaches run the code on each one, then show the first beach it fails on (or the last).
+  const maps = level.maps || [map], results = [];
+  for (const m of maps) {
+    results.push(await runPython({ code: cm.getValue(), map: m, dir, wood: level.wood, ban: level.ban }));
+    if (results.at(-1).error?.line === 0 && !results.at(-1).actions.length) break; // timed out: no point trying the rest
+  }
+  const pass = (r) => !r.error && check(level, r, { name: P.name });
+  let k = results.findIndex((r) => !pass(r));
+  if (k < 0) k = results.length - 1;
+  result = results[k];
+  if (maps.length > 1) {
+    result.beach = { k, n: maps.length, ok: results.filter(pass).length };
+    if (map !== maps[k]) { map = maps[k]; resetWorld(); }
+  }
   busy = false; setRunButton();
   step = 0;
   stepMode ? stepOnce() : play();
@@ -247,23 +276,26 @@ function finish() {
     if (r.error.line) markLine(r.error.line, "error-line");
     face("😵");
     say(r.error.msg, true);
-    return msg(`🤖 ${esc(r.error.msg)}` + (r.error.line ? `<span class="where">line ${r.error.line}</span>` : ""), "bad");
+    return msg(beachLine(r) + `🤖 ${esc(r.error.msg)}` + (r.error.line ? `<span class="where">line ${r.error.line}</span>` : ""), "bad");
   }
   if (!check(level, r, { name: P.name })) {
     face("🤔");
-    return msg(`🤖 ${esc(whyNot(level, r))}`, "bad");
+    return msg(beachLine(r) + `🤖 ${esc(whyNot(level, r))}`, "bad");
   }
   let stars = 3;
   const tips = [];
   if (level.par && r.lines > level.par) { stars--; tips.push(`For ⭐⭐⭐, can you do it in ${level.par} lines or fewer? You used ${r.lines}.`); }
   if (hintsUsed) { stars--; tips.push("Try again without a hint to get more stars!"); }
+  if (r.beach) tips.unshift(`It worked on all ${r.beach.n} beaches! 🏝️`);
   win(Math.max(1, stars), tips.join(" "));
 }
+// only worth saying when the code already works on some beaches
+const beachLine = (r) => r.beach?.ok ? `🏝️ Your code works on ${r.beach.ok} of the ${r.beach.n} beaches, but not on this one (beach ${r.beach.k + 1}):<br>` : "";
 
 function win(stars, tip = "", title = "") {
-  const rc = rec(level.id);
+  const rc = rec(level.id), first = !rc.done, before = rc.stars || 0;
   rc.done = true;
-  rc.stars = Math.max(rc.stars || 0, stars);
+  rc.stars = Math.max(before, stars);
   if (level.saveArt) P.art = result.said;
   if (level.saveHut) P.hut = { map, placed: result.placed };
   title ||= level.win || `${CHEERS[Math.floor(Math.random() * CHEERS.length)]}, Captain ${P.name}!`;
@@ -276,6 +308,10 @@ function win(stars, tip = "", title = "") {
     h.round++;
     delete h.map;
   }
+  // 🪙 5 for a first win, 10 for every new star; Shell Hunt pays 2 per shell
+  const coins = endless ? result.shells * 2 : (first ? 5 : 0) + (rc.stars - before) * 10;
+  P.coins += coins;
+  $("#win-coins").textContent = coins ? `+${coins} 🪙` : "";
   flushTime();
   save();
   updateHeader();
@@ -287,7 +323,8 @@ function win(stars, tip = "", title = "") {
   $("#win-tip").textContent = tip;
   $("#win-again").hidden = endless;
   $("#win-next").textContent = endless ? "Next beach →" : "🗺️ Back to the map";
-  setTimeout(() => { $("#win").showModal(); confettiBurst(); }, 500);
+  $("#win .win-pip").innerHTML = me();
+  setTimeout(() => { $("#win").showModal(); confettiBurst(); sfx("win"); }, 500);
 }
 
 function pickGuess(x, y) {
@@ -318,13 +355,15 @@ function showCard() {
   $("#card-btn").textContent = level.button;
   $("#card-extra").innerHTML = level.showoff ? showoffHTML() : "";
   if (level.showoff) {
-    if (!P.hat) { P.hat = true; save(); }
+    if (level.gift && !P.owned.includes(level.gift)) { P.owned.push(level.gift); P.wear.hat = level.gift; save(); updateHeader(); }
     victoryConfetti();
+    sfx("win");
   }
 }
 function showoffHTML() {
   let h = `<div class="trophies"><div class="trophy"><b>${totalStars()} ⭐</b><span>stars</span></div>`
-    + `<div class="trophy"><b>🤖🎩</b><span>Pip's new hat</span></div></div>`;
+    + `<div class="trophy"><b>${me()}</b><span>Your gift: ${level.gift}</span></div>`
+    + `<div class="trophy"><b>${P.coins} 🪙</b><span>coins</span></div></div>`;
   if (P.hut) {
     const cols = P.hut.map[0].length;
     h += `<h3>Your hut</h3><div class="mini" style="grid-template-columns:repeat(${cols},34px)">`
@@ -340,10 +379,11 @@ function showoffHTML() {
 function updateHeader() {
   $("#captain").textContent = `🧑‍✈️ Captain ${P.name}`;
   $("#star-total").textContent = `⭐ ${totalStars()}`;
+  $("#coin-total").textContent = `🪙 ${P.coins}`;
 }
 
 // ---------- roadmap ----------
-const ZONE_EMOJI = { A: "😴", B: "🏖️", K: "🧍", C: "🦀", D: "🛖", E: "🌊", F: "🐚" };
+const ZONE_EMOJI = { A: "😴", B: "🏖️", K: "🧍", C: "🦀", D: "🛖", E: "🌊", F: "🐚", G: "🎒", H: "🔁", I: "🔀", J: "🛠️", L: "💰" };
 const nextIndex = () => LEVELS.findIndex((l, i) => !done(i) && unlocked(i));
 const nodeIcon = (l, i) =>
   l.showoff ? "🏆" : l.type === "card" ? "📜" : l.type === "endless" ? "🔁" : l.type === "predict" ? "🔮" : l.debug ? "🐛" : i;
@@ -383,7 +423,7 @@ function renderMap() {
     b.onclick = () => (open ? openLevel(i) : lockedTap(b));
     box.append(b);
     if (i === next) {
-      box.insertAdjacentHTML("beforeend", `<div class="you" style="left:${x + (x > w / 2 ? 62 : -62)}px;top:${y}px">🤖${P.hat ? "🎩" : ""}</div>`);
+      box.insertAdjacentHTML("beforeend", `<div class="you" style="left:${x + (x > w / 2 ? 62 : -62)}px;top:${y}px">${me()}</div>`);
       focus = b;
     }
     y += l.showoff ? 130 : 96;
@@ -441,6 +481,7 @@ function renderPalette() {
     const b = document.createElement("button");
     b.textContent = e;
     b.title = "Add " + e;
+    if (e.length > 3) b.className = "code"; // a command, not an emoji
     b.onclick = () => { cm.replaceSelection(e); cm.focus(); };
     p.append(b);
   }
@@ -493,6 +534,121 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) flushCloud();
 });
 
+// ---------- shop: avatars, hats, pets and backgrounds, bought with coins ----------
+const SHOP = {
+  avatar: { title: "Avatars", items: { "🤖": 0, "🧒": 30, "👧": 30, "👦": 30, "🧑‍🚀": 120, "🧙": 150, "🥷": 150, "🧜": 150, "🦸": 200, "🧚": 200,
+    "🐱": 60, "🐶": 60, "🐼": 80, "🦊": 80, "🐸": 80, "🐵": 100, "🐧": 100, "🐯": 120, "🦁": 120, "🦄": 250, "🐲": 300 } },
+  hat: { title: "Hats & caps", items: { "🧢": 50, "🎀": 50, "🎩": 80, "👒": 80, "⛑️": 100, "🎓": 120, "🤠": 150, "👑": 400 } },
+  pet: { title: "Pets", items: { "🐥": 80, "🐢": 100, "🐰": 120, "🐹": 120, "🦜": 150, "🐙": 180, "🦖": 250, "🐉": 400 } },
+  theme: { title: "Backgrounds", items: { beach: 0, jungle: 150, space: 200, ocean: 200, candy: 250 } },
+};
+// Music is a tiny tune made with Web Audio, so there are no files to download. Notes are MIDI numbers, 0 = rest.
+const THEMES = {
+  beach: { icon: "🏝️", name: "Sunny beach", deco: ["☀️", "☁️", "☁️", "🌴", "🌴", "🐦", "⛵", "🐚"],
+    notes: [72, 0, 76, 79, 76, 0, 74, 72, 74, 0, 76, 0, 72, 0, 67, 0], bass: [48, 53, 55, 48] },
+  jungle: { icon: "🌴", name: "Jungle", deco: ["🌞", "🦜", "🌿", "🌳", "🌴", "🦋", "🐒", "🌺"],
+    notes: [69, 72, 0, 69, 74, 0, 72, 69, 67, 0, 69, 72, 76, 0, 74, 0], bass: [45, 45, 50, 52] },
+  space: { icon: "🚀", name: "Outer space", deco: ["🪐", "⭐", "✨", "🌙", "🚀", "🛸", "⭐", "🌍"],
+    notes: [76, 0, 79, 0, 83, 0, 81, 79, 76, 0, 74, 0, 71, 0, 0, 0], bass: [40, 43, 45, 38] },
+  ocean: { icon: "🐠", name: "Under the sea", deco: ["🫧", "🫧", "🐟", "🪸", "🐙", "🐠", "🐳", "🐡"],
+    notes: [67, 71, 74, 0, 72, 0, 71, 69, 67, 0, 64, 67, 69, 0, 0, 0], bass: [43, 48, 45, 50] },
+  candy: { icon: "🍭", name: "Candy land", deco: ["🌈", "☁️", "🍬", "🍩", "🍭", "🧁", "🍦", "🍰"],
+    notes: [79, 76, 79, 84, 0, 79, 81, 0, 79, 76, 72, 0, 74, 76, 72, 0], bass: [48, 52, 53, 55] },
+};
+
+function openShop() {
+  renderShop();
+  $("#shop-msg").textContent = "";
+  $("#shop").showModal();
+}
+function renderShop() {
+  $("#shop-coins").textContent = `🪙 ${P.coins}`;
+  $("#shop-preview").innerHTML = me();
+  $("#shop-items").innerHTML = Object.entries(SHOP).map(([kind, { title, items }]) => `<h3>${title}</h3><div class="shelf">`
+    + Object.entries(items).map(([id, price]) => {
+      const have = !price || P.owned.includes(id), on = P.wear[kind] === id, t = THEMES[id];
+      return `<button class="item${on ? " on" : ""}" data-kind="${kind}" data-id="${id}" aria-pressed="${on}">`
+        + `<b>${t ? t.icon : id}</b>${t ? `<small>${t.name}</small>` : ""}<span>${on ? "✓ On" : have ? "Wear" : `🪙 ${price}`}</span></button>`;
+    }).join("") + "</div>").join("");
+}
+$("#shop-items").onclick = (e) => {
+  const b = e.target.closest(".item");
+  if (!b) return;
+  const { kind, id } = b.dataset, price = SHOP[kind].items[id], have = !price || P.owned.includes(id);
+  if (!have) {
+    if (P.coins < price) return ($("#shop-msg").textContent = `You need ${price - P.coins} more 🪙. Win levels to earn coins!`);
+    P.coins -= price;
+    P.owned.push(id);
+    sfx("coin");
+    $("#shop-msg").textContent = `New! ${THEMES[id]?.name || id} is yours 🎉`;
+  }
+  // tapping the hat or pet you already wear takes it off
+  P.wear[kind] = have && P.wear[kind] === id && (kind === "hat" || kind === "pet") ? "" : id;
+  save();
+  applyTheme();
+  updateHeader();
+  renderShop();
+};
+$("#shop-btn").onclick = openShop;
+$("#shop-close").onclick = () => $("#shop").close();
+$("#shop").onclose = () => (level ? renderStage() : renderMap());
+
+function applyTheme() {
+  const t = THEMES[P.wear.theme] || THEMES.beach;
+  if (document.body.dataset.theme === P.wear.theme) return;
+  document.body.dataset.theme = P.wear.theme;
+  $("#scenery").innerHTML = t.deco.map((d) => `<span>${d}</span>`).join("");
+  if (musicTimer) music(true); // switch to the new background's tune
+}
+
+// ---------- music & sounds ----------
+let ac, musicTimer, beat = 0, nextNote = 0;
+const hz = (n) => 440 * 2 ** ((n - 69) / 12);
+function tone(n, t, len, type = "triangle", vol = 0.035) {
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.value = hz(n);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  o.connect(g).connect(ac.destination);
+  o.start(t);
+  o.stop(t + len);
+}
+function music(on) {
+  clearInterval(musicTimer);
+  musicTimer = null;
+  $("#music").textContent = P.music === false ? "🔇" : "🎵";
+  if (!on) return;
+  try { (ac ||= new AudioContext()).resume(); } catch { return; } // no Web Audio: play without music
+  const { notes, bass } = THEMES[P.wear.theme] || THEMES.beach;
+  nextNote = ac.currentTime + 0.1;
+  musicTimer = setInterval(() => {
+    nextNote = Math.max(nextNote, ac.currentTime); // after the tab was in the background, don't play the missed notes
+    while (nextNote < ac.currentTime + 0.3) { // schedule a little ahead so it never stutters
+      const n = notes[beat % notes.length];
+      if (n) tone(n, nextNote, 0.28);
+      if (beat % 4 === 0) tone(bass[(beat / 4) % bass.length], nextNote, 0.9, "sine", 0.05);
+      beat++;
+      nextNote += 0.22;
+    }
+  }, 100);
+}
+function sfx(kind) {
+  if (P.music === false || !ac) return;
+  const t = ac.currentTime, play = (ns, step, type = "square") => ns.forEach((n, i) => tone(n, t + i * step, 0.25, type, 0.06));
+  if (kind === "win") play([72, 76, 79, 84], 0.11);
+  else if (kind === "coin") play([88, 93], 0.08);
+  else if (kind === "bump") play([45, 41], 0.09, "sawtooth");
+}
+$("#music").onclick = () => {
+  P.music = P.music === false;
+  save();
+  music(P.music);
+};
+// Browsers only allow sound after the first tap, so the music starts then.
+addEventListener("pointerdown", () => { if (P.music !== false && !musicTimer) music(true); }, { once: true });
+document.addEventListener("visibilitychange", () => { if (ac) document.hidden ? ac.suspend() : ac.resume(); });
+
 // ---------- parent panel ----------
 function openParent() {
   flushTime();
@@ -528,7 +684,7 @@ $("#rename").onclick = () => {
 async function resetProgress() {
   if (!confirm(`Start the whole game again from the beginning? All of Captain ${P.name}'s stars, code and drawings will be deleted.`)) return;
   level = null; // so no level time gets added back
-  P = { levels: {}, code: {}, prevName: P.name }; // asks for the name again, with the old one filled in
+  P = upgrade({ prevName: P.name }); // asks for the name again, with the old one filled in
   save();
   await flushCloud();
   location.reload();
@@ -591,6 +747,7 @@ function start() {
   }
   $("#welcome").hidden = true;
   $("#game").hidden = false;
+  applyTheme();
   updateHeader();
   showMap();
 }
@@ -598,6 +755,8 @@ function start() {
 // Without a Firebase config the game runs locally; with one, the child signs in with Google first.
 async function boot() {
   startWorker();
+  applyTheme();
+  music(false);
   if (!cloudEnabled) return start();
   $("#name-form").hidden = true;
   $("#welcome-msg").textContent = "Loading…";
@@ -611,7 +770,7 @@ async function boot() {
         return;
       }
       // Saved progress in the account wins; on the first sign-in, this device's progress is uploaded.
-      if (u.data) P = { levels: {}, code: {}, ...JSON.parse(u.data) };
+      if (u.data) P = upgrade(JSON.parse(u.data));
       if (!P.name) $("#name-input").value = P.prevName || u.name.split(" ")[0].slice(0, 20);
       save();
       P.name ? welcomeBack() : start();
