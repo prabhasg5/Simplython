@@ -3,7 +3,7 @@ importScripts("https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js");
 
 const ready = (async () => {
   const py = await loadPyodide();
-  py.runPython(await (await fetch("pipbot.py")).text());
+  py.runPython(await (await fetch("pipbot.py?v=2")).text());
   return py.globals.get("run_json");
 })();
 

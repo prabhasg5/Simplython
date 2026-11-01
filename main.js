@@ -1,5 +1,5 @@
-import { LEVELS, PARTS, check, whyNot, makeHuntMap } from "./levels.js";
-import { cloudEnabled, initCloud, signIn, signOut, saveCloud, flushCloud } from "./cloud.js";
+import { LEVELS, PARTS, check, whyNot, makeHuntMap } from "./levels.js?v=2";
+import { cloudEnabled, initCloud, signIn, signOut, saveCloud, flushCloud } from "./cloud.js?v=2";
 
 const $ = (s) => document.querySelector(s);
 const KEY = "simplython";
@@ -47,7 +47,7 @@ const me = (face = P.wear.avatar) => `<span class="av"><span class="face">${face
 let worker, ready = false, busy = false, pending = null;
 function startWorker() {
   ready = false;
-  worker = new Worker("worker.js");
+  worker = new Worker("worker.js?v=2");
   worker.onmessage = ({ data }) => {
     if (data.ready) { ready = true; return setRunButton(); }
     if (data.fatal) return msg("😴 Pip couldn't wake up. Check the internet connection and reload the page.", "bad");

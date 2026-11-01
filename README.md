@@ -48,6 +48,10 @@ Many Session 2 levels test the same code on several different beaches, so the ch
 
 Plain HTML, CSS and JavaScript (no build step) · [Pyodide](https://pyodide.org) · [CodeMirror](https://codemirror.net/5/) · [Firebase](https://firebase.google.com) Auth & Firestore · GitHub Pages
 
+## Releasing
+
+Browsers keep files for 10 minutes on GitHub Pages, so a new release can mix old and new files. Before pushing a release, bump `?v=` everywhere it appears (`index.html`, `main.js`, `worker.js`).
+
 ## Run it locally
 
 ```bash
